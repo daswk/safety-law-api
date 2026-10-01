@@ -4,60 +4,73 @@ export default async function handler(req, res) {
     if (!query) return res.status(200).json({ total: 0, results: [] });
 
     const apiKey = '4548';
-    
-    // 핵심 3대 법령
     const targetLaws = ['산업안전보건법', '중대재해 처벌 등에 관한 법률', '건설기술 진흥법'];
 
     try {
         let matchedArticles = [];
 
-        for (const lawName of targetLaws) {
-            // 1단계: 법령의 고유 번호(MST) 찾기
+        // Vercel 타임아웃 방지를 위해 병렬(Promise.all)로 빠르게 스캔
+        const fetchPromises = targetLaws.map(async (lawName) => {
             const searchUrl = `https://www.law.go.kr/DRF/lawSearch.do?OC=${apiKey}&target=law&type=JSON&query=${encodeURIComponent(lawName)}`;
             const searchRes = await fetch(searchUrl);
             const searchData = await searchRes.json();
             
-            if (!searchData.LawSearch || !searchData.LawSearch.law) continue;
-            
+            if (!searchData.LawSearch || !searchData.LawSearch.law) return;
             let laws = searchData.LawSearch.law;
             if (!Array.isArray(laws)) laws = [laws];
             
-            const exactLaw = laws.find(l => 
-                l.법령명한글 && l.법령명한글.replace(/\s/g, '') === lawName.replace(/\s/g, '')
-            );
-            if (!exactLaw) continue;
+            const exactLaw = laws.find(l => l.법령명한글 && l.법령명한글.replace(/\s/g, '') === lawName.replace(/\s/g, ''));
+            if (!exactLaw) return;
             
             const mst = exactLaw.법령일련번호;
-
-            // 2단계: 에러가 잦은 JSON 대신, 절대 고장 나지 않는 구형 'XML' 형태로 본문 요청
-            const detailUrl = `https://www.law.go.kr/DRF/lawService.do?OC=${apiKey}&target=law&type=XML&MST=${mst}`;
+            
+            // 본문을 정식 JSON 포맷으로 요청
+            const detailUrl = `https://www.law.go.kr/DRF/lawService.do?OC=${apiKey}&target=law&type=JSON&MST=${mst}`;
             const detailRes = await fetch(detailUrl);
-            const detailText = await detailRes.text(); // 텍스트 날것으로 가져오기
+            const detailData = await detailRes.json();
+
+            if (!detailData.Law || !detailData.Law.JoMuns || !detailData.Law.JoMuns.JoMun) return;
             
-            // 3단계: XML 원문에서 <조문> 덩어리만 통째로 뜯어내기 (정규식 사용)
-            const joRegex = /<조문[^>]*>(.*?)<\/조문>/gs;
-            let match;
-            
-            while ((match = joRegex.exec(detailText)) !== null) {
-                const articleXml = match[1];
+            let articles = detailData.Law.JoMuns.JoMun;
+            if (!Array.isArray(articles)) articles = [articles];
+
+            articles.forEach(article => {
+                // 1. 몇조 몇항 추출
+                let joNo = article.joNo ? `제${article.joNo}조` : '';
+                if (article.joBrNo && article.joBrNo !== '00') joNo += `의${article.joBrNo}`;
                 
-                // 특수기호 및 태그를 전부 부수고 '순수 한글 텍스트'만 남기기
-                let pureText = articleXml.replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+                // 2. 조항 제목 추출
+                let joTitle = article.joSubTtl ? article.joSubTtl : '';
                 
-                // 순수 텍스트 안에 사용자가 검색한 단어("안전", "위험" 등)가 포함되어 있다면!
-                if (pureText.includes(query)) {
-                    // 화면에 너무 길게 나오지 않도록 200자 내외로 자르기
-                    let displayContent = pureText.length > 200 ? pureText.substring(0, 200) + '...' : pureText;
-                    
-                    matchedArticles.push({
-                        lawName: lawName,
-                        content: displayContent,
-                        link: `https://www.law.go.kr/법령/${encodeURIComponent(lawName)}`
+                // 3. 원문 전체 조립 (조문 + 항 + 호 구조 완벽 복원)
+                let fullText = article.joCtt ? article.joCtt.replace(/<[^>]*>?/gm, '') : '';
+                
+                if (article.Hang) {
+                    let hangs = Array.isArray(article.Hang) ? article.Hang : [article.Hang];
+                    hangs.forEach(hang => {
+                        if (hang.hangCtt) fullText += '\n' + hang.hangCtt.replace(/<[^>]*>?/gm, '');
+                        if (hang.Ho) {
+                            let hos = Array.isArray(hang.Ho) ? hang.Ho : [hang.Ho];
+                            hos.forEach(ho => {
+                                if (ho.hoCtt) fullText += '\n  ' + ho.hoCtt.replace(/<[^>]*>?/gm, '');
+                            });
+                        }
                     });
                 }
-            }
-        }
 
+                // 조문 제목이나 본문에 검색어가 포함되어 있으면 추출
+                if (fullText.includes(query) || joTitle.includes(query)) {
+                    matchedArticles.push({
+                        lawName: lawName,
+                        articleNo: joNo,
+                        articleTitle: joTitle,
+                        content: fullText.trim()
+                    });
+                }
+            });
+        });
+
+        await Promise.all(fetchPromises);
         res.status(200).json({ total: matchedArticles.length, results: matchedArticles });
     } catch (error) {
         res.status(500).json({ error: '서버 에러 발생', details: String(error) });
