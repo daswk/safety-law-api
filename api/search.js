@@ -9,74 +9,75 @@ export default async function handler(req, res) {
     try {
         let matchedArticles = [];
 
-        const fetchPromises = targetLaws.map(async (lawName) => {
-            const searchUrl = `https://www.law.go.kr/DRF/lawSearch.do?OC=${apiKey}&target=law&type=JSON&query=${encodeURIComponent(lawName)}`;
-            const searchRes = await fetch(searchUrl);
-            const searchData = await searchRes.json();
-            
-            if (!searchData.LawSearch || !searchData.LawSearch.law) return;
-            let laws = searchData.LawSearch.law;
-            if (!Array.isArray(laws)) laws = [laws];
-            
-            const exactLaw = laws.find(l => l.법령명한글 && l.법령명한글.replace(/\s/g, '') === lawName.replace(/\s/g, ''));
-            if (!exactLaw) return;
-            const mst = exactLaw.법령일련번호;
-            
-            // 안정적인 JSON 구조로 본문 요청
-            const detailUrl = `https://www.law.go.kr/DRF/lawService.do?OC=${apiKey}&target=law&type=JSON&MST=${mst}`;
-            const detailRes = await fetch(detailUrl);
-            const detailData = await detailRes.json();
+        // 서버가 터지지 않도록 3대 법령을 '하나씩 순서대로(for...of)' 안전하게 요청합니다.
+        for (const lawName of targetLaws) {
+            try {
+                // 1. 법령 ID(MST) 찾기 (안정성을 위해 XML 사용)
+                const searchUrl = `https://www.law.go.kr/DRF/lawSearch.do?OC=${apiKey}&target=law&type=XML&query=${encodeURIComponent(lawName)}`;
+                const searchRes = await fetch(searchUrl);
+                const searchText = await searchRes.text();
+                
+                const mstMatch = searchText.match(/<법령일련번호>(.*?)<\/법령일련번호>/);
+                if (!mstMatch) continue;
+                const mst = mstMatch[1];
 
-            if (!detailData.Law || !detailData.Law.JoMuns || !detailData.Law.JoMuns.JoMun) return;
-            let articles = detailData.Law.JoMuns.JoMun;
-            if (!Array.isArray(articles)) articles = [articles];
+                // 2. 조항 원문 가져오기 (고장 나지 않는 XML 원본 추출)
+                const detailUrl = `https://www.law.go.kr/DRF/lawService.do?OC=${apiKey}&target=law&type=XML&MST=${mst}`;
+                const detailRes = await fetch(detailUrl);
+                const detailText = await detailRes.text();
 
-            articles.forEach(article => {
-                let joNo = article.joNo ? `제${article.joNo}조` : '';
-                if (article.joBrNo && article.joBrNo !== '00') joNo += `의${article.joBrNo}`;
-                
-                let joTitle = article.joSubTtl ? article.joSubTtl : '';
-                
-                // 조, 항, 호의 줄바꿈과 들여쓰기를 완벽하게 유지하여 텍스트 조립
-                let contentLines = [];
-                if (article.joCtt) contentLines.push(article.joCtt.replace(/<[^>]*>?/gm, '').trim());
-                
-                if (article.Hang) {
-                    let hangs = Array.isArray(article.Hang) ? article.Hang : [article.Hang];
-                    hangs.forEach(hang => {
-                        if (hang.hangCtt) contentLines.push(hang.hangCtt.replace(/<[^>]*>?/gm, '').trim());
-                        if (hang.Ho) {
-                            let hos = Array.isArray(hang.Ho) ? hang.Ho : [hang.Ho];
-                            hos.forEach(ho => {
-                                // '호'는 들여쓰기 2칸 추가
-                                if (ho.hoCtt) contentLines.push('  ' + ho.hoCtt.replace(/<[^>]*>?/gm, '').trim());
-                            });
+                // 3. <조문> 단위로 쪼개기
+                const joRegex = /<조문[^>]*>([\s\S]*?)<\/조문>/g;
+                let match;
+
+                while ((match = joRegex.exec(detailText)) !== null) {
+                    const joXml = match[1];
+
+                    // 조문 번호(제O조의O) 추출
+                    let joNoMatch = joXml.match(/<조문번호>(.*?)<\/조문번호>/);
+                    let joNo = joNoMatch ? `제${joNoMatch[1]}조` : '';
+                    let joBrNoMatch = joXml.match(/<조문가지번호>(.*?)<\/조문가지번호>/);
+                    if (joBrNoMatch && joBrNoMatch[1] !== '00') joNo += `의${joBrNoMatch[1]}`;
+
+                    // 제목 추출
+                    let joTitleMatch = joXml.match(/<조문제목>(.*?)<\/조문제목>/);
+                    let joTitle = joTitleMatch ? joTitleMatch[1].replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').trim() : '';
+
+                    // 내용 추출 (조항, 항, 호, 목의 구조와 들여쓰기 완벽 유지)
+                    let contentLines = [];
+                    const contentRegex = /<(조문내용|항내용|호내용|목내용)[^>]*>([\s\S]*?)<\/\1>/g;
+                    let cMatch;
+                    
+                    while ((cMatch = contentRegex.exec(joXml)) !== null) {
+                        let text = cMatch[2].replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').replace(/<[^>]+>/g, '').trim();
+                        if (text) {
+                            if (cMatch[1] === '호내용') text = '  ' + text; // 호는 2칸 들여쓰기
+                            if (cMatch[1] === '목내용') text = '    ' + text; // 목은 4칸 들여쓰기
+                            contentLines.push(text);
                         }
-                    });
+                    }
+
+                    const fullText = contentLines.join('\n');
+                    
+                    const isTitleMatch = joTitle.includes(query);
+                    const isContentMatch = fullText.includes(query);
+
+                    if (isTitleMatch || isContentMatch) {
+                        matchedArticles.push({
+                            lawName: lawName,
+                            articleNo: joNo,
+                            articleTitle: joTitle,
+                            content: fullText,
+                            priority: isTitleMatch ? 1 : 2 // 제목 일치 시 1순위 부여
+                        });
+                    }
                 }
+            } catch (e) {
+                continue; // 중간에 하나 에러가 나도 서버가 멈추지 않고 계속 검색
+            }
+        }
 
-                const fullText = contentLines.join('\n');
-                
-                // 검색어가 제목에 있는지, 내용에 있는지 구분
-                const isTitleMatch = joTitle.includes(query);
-                const isContentMatch = fullText.includes(query);
-
-                if (isTitleMatch || isContentMatch) {
-                    matchedArticles.push({
-                        lawName: lawName,
-                        articleNo: joNo,
-                        articleTitle: joTitle,
-                        content: fullText,
-                        // 제목에 포함되면 1순위, 내용에만 있으면 2순위
-                        priority: isTitleMatch ? 1 : 2 
-                    });
-                }
-            });
-        });
-
-        await Promise.all(fetchPromises);
-        
-        // 정렬 로직: 1. 제목 일치 우선 -> 2. 법령 및 조항 순서대로 정렬
+        // 제목 일치(1순위)를 무조건 맨 위로 끌어올림
         matchedArticles.sort((a, b) => a.priority - b.priority);
 
         res.status(200).json({ total: matchedArticles.length, results: matchedArticles });
