@@ -9,10 +9,9 @@ export default async function handler(req, res) {
     try {
         let matchedArticles = [];
 
-        // 서버가 터지지 않도록 3대 법령을 '하나씩 순서대로(for...of)' 안전하게 요청합니다.
         for (const lawName of targetLaws) {
             try {
-                // 1. 법령 ID(MST) 찾기 (안정성을 위해 XML 사용)
+                // 1. 법령 고유 ID(MST) 찾기
                 const searchUrl = `https://www.law.go.kr/DRF/lawSearch.do?OC=${apiKey}&target=law&type=XML&query=${encodeURIComponent(lawName)}`;
                 const searchRes = await fetch(searchUrl);
                 const searchText = await searchRes.text();
@@ -21,29 +20,29 @@ export default async function handler(req, res) {
                 if (!mstMatch) continue;
                 const mst = mstMatch[1];
 
-                // 2. 조항 원문 가져오기 (고장 나지 않는 XML 원본 추출)
+                // 2. 전체 원문 데이터 가져오기
                 const detailUrl = `https://www.law.go.kr/DRF/lawService.do?OC=${apiKey}&target=law&type=XML&MST=${mst}`;
                 const detailRes = await fetch(detailUrl);
                 const detailText = await detailRes.text();
 
-                // 3. <조문> 단위로 쪼개기
-                const joRegex = /<조문[^>]*>([\s\S]*?)<\/조문>/g;
+                // ★ 완벽하게 수정한 부분: 전체(<조문>)가 아닌 개별 조항(<조문단위>)으로 정확히 쪼갭니다!
+                const joRegex = /<조문단위[^>]*>([\s\S]*?)<\/조문단위>/g;
                 let match;
 
                 while ((match = joRegex.exec(detailText)) !== null) {
                     const joXml = match[1];
 
-                    // 조문 번호(제O조의O) 추출
+                    // 조항 번호 찾기
                     let joNoMatch = joXml.match(/<조문번호>(.*?)<\/조문번호>/);
                     let joNo = joNoMatch ? `제${joNoMatch[1]}조` : '';
                     let joBrNoMatch = joXml.match(/<조문가지번호>(.*?)<\/조문가지번호>/);
                     if (joBrNoMatch && joBrNoMatch[1] !== '00') joNo += `의${joBrNoMatch[1]}`;
 
-                    // 제목 추출
+                    // 제목 찾기
                     let joTitleMatch = joXml.match(/<조문제목>(.*?)<\/조문제목>/);
                     let joTitle = joTitleMatch ? joTitleMatch[1].replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').trim() : '';
 
-                    // 내용 추출 (조항, 항, 호, 목의 구조와 들여쓰기 완벽 유지)
+                    // 조항의 원문 내용 찾기 (조문내용, 항내용, 호내용, 목내용 싹 다 가져오기)
                     let contentLines = [];
                     const contentRegex = /<(조문내용|항내용|호내용|목내용)[^>]*>([\s\S]*?)<\/\1>/g;
                     let cMatch;
@@ -59,6 +58,7 @@ export default async function handler(req, res) {
 
                     const fullText = contentLines.join('\n');
                     
+                    // 검색어 매칭 확인
                     const isTitleMatch = joTitle.includes(query);
                     const isContentMatch = fullText.includes(query);
 
@@ -68,16 +68,16 @@ export default async function handler(req, res) {
                             articleNo: joNo,
                             articleTitle: joTitle,
                             content: fullText,
-                            priority: isTitleMatch ? 1 : 2 // 제목 일치 시 1순위 부여
+                            priority: isTitleMatch ? 1 : 2 // 제목이 일치하면 1순위
                         });
                     }
                 }
             } catch (e) {
-                continue; // 중간에 하나 에러가 나도 서버가 멈추지 않고 계속 검색
+                continue; 
             }
         }
 
-        // 제목 일치(1순위)를 무조건 맨 위로 끌어올림
+        // 우선순위에 따라 정렬 (1순위가 최상단으로)
         matchedArticles.sort((a, b) => a.priority - b.priority);
 
         res.status(200).json({ total: matchedArticles.length, results: matchedArticles });
