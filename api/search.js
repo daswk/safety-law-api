@@ -12,7 +12,7 @@ export default async function handler(req, res) {
         let matchedArticles = [];
 
         for (const lawName of targetLaws) {
-            // 1. 법 이름으로 검색하여 고유 번호(MST) 찾기
+            // 1단계: 법령의 고유 번호(MST) 찾기
             const searchUrl = `https://www.law.go.kr/DRF/lawSearch.do?OC=${apiKey}&target=law&type=JSON&query=${encodeURIComponent(lawName)}`;
             const searchRes = await fetch(searchUrl);
             const searchData = await searchRes.json();
@@ -22,7 +22,6 @@ export default async function handler(req, res) {
             let laws = searchData.LawSearch.law;
             if (!Array.isArray(laws)) laws = [laws];
             
-            // ★ 수정된 부분: '법령명한글' 키값 사용 및 띄어쓰기 무시 매칭
             const exactLaw = laws.find(l => 
                 l.법령명한글 && l.법령명한글.replace(/\s/g, '') === lawName.replace(/\s/g, '')
             );
@@ -30,32 +29,33 @@ export default async function handler(req, res) {
             
             const mst = exactLaw.법령일련번호;
 
-            // 2. 찾은 고유 번호로 해당 법령의 전체 원문(조항) 가져오기
-            const detailUrl = `https://www.law.go.kr/DRF/lawService.do?OC=${apiKey}&target=law&type=JSON&MST=${mst}`;
+            // 2단계: 에러가 잦은 JSON 대신, 절대 고장 나지 않는 구형 'XML' 형태로 본문 요청
+            const detailUrl = `https://www.law.go.kr/DRF/lawService.do?OC=${apiKey}&target=law&type=XML&MST=${mst}`;
             const detailRes = await fetch(detailUrl);
-            const detailText = await detailRes.text();
+            const detailText = await detailRes.text(); // 텍스트 날것으로 가져오기
             
-            try {
-                const detailData = JSON.parse(detailText);
-                if (!detailData.Law || !detailData.Law.JoMuns || !detailData.Law.JoMuns.JoMun) continue;
+            // 3단계: XML 원문에서 <조문> 덩어리만 통째로 뜯어내기 (정규식 사용)
+            const joRegex = /<조문[^>]*>(.*?)<\/조문>/gs;
+            let match;
+            
+            while ((match = joRegex.exec(detailText)) !== null) {
+                const articleXml = match[1];
                 
-                let articles = detailData.Law.JoMuns.JoMun;
-                if (!Array.isArray(articles)) articles = [articles];
-
-                // 3. 조항 내용 중에 검색어가 있는지 딥 스캔
-                articles.forEach(article => {
-                    const articleString = JSON.stringify(article);
-                    if (articleString.includes(query)) {
-                        // 불필요한 태그 제거 및 내용 추출
-                        let content = article.joCtt ? article.joCtt.replace(/<[^>]*>?/gm, '') : '상세 내용 참조';
-                        matchedArticles.push({
-                            lawName: lawName,
-                            content: content,
-                            link: `https://www.law.go.kr/법령/${encodeURIComponent(lawName)}`
-                        });
-                    }
-                });
-            } catch(e) { continue; }
+                // 특수기호 및 태그를 전부 부수고 '순수 한글 텍스트'만 남기기
+                let pureText = articleXml.replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+                
+                // 순수 텍스트 안에 사용자가 검색한 단어("안전", "위험" 등)가 포함되어 있다면!
+                if (pureText.includes(query)) {
+                    // 화면에 너무 길게 나오지 않도록 200자 내외로 자르기
+                    let displayContent = pureText.length > 200 ? pureText.substring(0, 200) + '...' : pureText;
+                    
+                    matchedArticles.push({
+                        lawName: lawName,
+                        content: displayContent,
+                        link: `https://www.law.go.kr/법령/${encodeURIComponent(lawName)}`
+                    });
+                }
+            }
         }
 
         res.status(200).json({ total: matchedArticles.length, results: matchedArticles });
