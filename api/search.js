@@ -8,7 +8,6 @@ export default async function handler(req, res) {
 
     const apiKey = '4548';
     
-    // 30여 개 법령 리스트 (기존과 동일)
     const targetLaws = [
         '산업안전보건법', '산업안전보건법 시행령', '산업안전보건법 시행규칙', '산업안전보건기준에 관한 규칙',
         '건설기술 진흥법', '건설기술 진흥법 시행령', '건설기술 진흥법 시행규칙',
@@ -28,7 +27,6 @@ export default async function handler(req, res) {
         '콘크리트공사 표준안전 작업지침'
     ];
 
-    // ★ 추가된 핵심 로직: 법령별 노출 우선순위 랭킹표 ★
     const lawRanking = {
         '산업안전보건법': 1,
         '산업안전보건법 시행령': 2,
@@ -47,15 +45,19 @@ export default async function handler(req, res) {
             let tempCache = [];
             const fetchPromises = targetLaws.map(async (lawName) => {
                 try {
-                    const searchUrl = `https://www.law.go.kr/DRF/lawSearch.do?OC=${apiKey}&target=law&type=XML&query=${encodeURIComponent(lawName)}`;
+                    // ★ 핵심 로직: 이름에 '지침'이나 '기준'이 들어가면 'admrul(행정규칙)'로 변경하여 검색 ★
+                    const targetType = (lawName.includes('지침') || lawName.includes('기준')) ? 'admrul' : 'law';
+                    
+                    const searchUrl = `https://www.law.go.kr/DRF/lawSearch.do?OC=${apiKey}&target=${targetType}&type=XML&query=${encodeURIComponent(lawName)}`;
                     const searchRes = await fetch(searchUrl);
                     const searchText = await searchRes.text();
                     
-                    const mstMatch = searchText.match(/<법령일련번호>(.*?)<\/법령일련번호>/);
+                    // 법령일련번호 또는 행정규칙일련번호 추출
+                    const mstMatch = searchText.match(/<(?:법령일련번호|행정규칙일련번호)>(.*?)<\/(?:법령일련번호|행정규칙일련번호)>/);
                     if (!mstMatch) return;
                     const mst = mstMatch[1];
 
-                    const detailUrl = `https://www.law.go.kr/DRF/lawService.do?OC=${apiKey}&target=law&type=XML&MST=${mst}`;
+                    const detailUrl = `https://www.law.go.kr/DRF/lawService.do?OC=${apiKey}&target=${targetType}&type=XML&MST=${mst}`;
                     const detailRes = await fetch(detailUrl);
                     const detailText = await detailRes.text();
 
@@ -98,23 +100,14 @@ export default async function handler(req, res) {
             const isTitleMatch = item.articleTitle.includes(query);
             const isContentMatch = item.content.includes(query);
             if (isTitleMatch || isContentMatch) {
-                // 제목 일치면 priority 1, 아니면 2
                 matchedArticles.push({ ...item, priority: isTitleMatch ? 1 : 2 });
             }
         });
 
-        // ★ 정렬 알고리즘 적용 부분 ★
         matchedArticles.sort((a, b) => {
-            // 1차 정렬: 제목 일치(priority 1)가 무조건 최우선
-            if (a.priority !== b.priority) {
-                return a.priority - b.priority;
-            }
-            
-            // 2차 정렬: 우선순위가 같다면(둘 다 본문 일치라면) 지정된 9대 핵심 법령 순서대로 정렬
-            // lawRanking 표에 없는 나머지 법령이나 고시들은 99등으로 처리하여 맨 밑으로 내림
+            if (a.priority !== b.priority) return a.priority - b.priority;
             const rankA = lawRanking[a.lawName] || 99;
             const rankB = lawRanking[b.lawName] || 99;
-            
             return rankA - rankB;
         });
 
