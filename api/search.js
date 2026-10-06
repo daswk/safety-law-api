@@ -8,24 +8,18 @@ export default async function handler(req, res) {
 
     const apiKey = '4548';
     
-    // ★ 토목 건설 현장에 필요한 30여 개 핵심 법령 및 고시 총망라 ★
+    // 30여 개 법령 리스트 (기존과 동일)
     const targetLaws = [
-        // 1. 기존 핵심 안전법령
         '산업안전보건법', '산업안전보건법 시행령', '산업안전보건법 시행규칙', '산업안전보건기준에 관한 규칙',
-        '중대재해 처벌 등에 관한 법률', '중대재해 처벌 등에 관한 법률 시행령',
         '건설기술 진흥법', '건설기술 진흥법 시행령', '건설기술 진흥법 시행규칙',
-        // 2. 장비 및 기반시설
+        '중대재해 처벌 등에 관한 법률', '중대재해 처벌 등에 관한 법률 시행령',
         '건설기계관리법', '건설기계관리법 시행령', '건설기계관리법 시행규칙',
         '시설물의 안전 및 유지관리에 관한 특별법', '시설물의 안전 및 유지관리에 관한 특별법 시행령', '시설물의 안전 및 유지관리에 관한 특별법 시행규칙',
-        // 3. 굴착 및 지하 안전
         '지하안전관리에 관한 특별법', '지하안전관리에 관한 특별법 시행령', '지하안전관리에 관한 특별법 시행규칙',
-        // 4. 건설업 기초
         '건설산업기본법', '건설산업기본법 시행령', '건설산업기본법 시행규칙',
-        // 5. 환경 및 재난
         '소음·진동관리법', '소음·진동관리법 시행령', '소음·진동관리법 시행규칙',
         '폐기물관리법', '폐기물관리법 시행령', '폐기물관리법 시행규칙',
         '자연재해대책법', '자연재해대책법 시행령', '자연재해대책법 시행규칙',
-        // 6. 필수 고시 및 작업지침
         '건설업 산업안전보건관리비 계상 및 사용기준',
         '사업장 위험성평가에 관한 지침',
         '건설공사 안전관리 업무수행 지침',
@@ -33,6 +27,19 @@ export default async function handler(req, res) {
         '터널공사 표준안전 작업지침',
         '콘크리트공사 표준안전 작업지침'
     ];
+
+    // ★ 추가된 핵심 로직: 법령별 노출 우선순위 랭킹표 ★
+    const lawRanking = {
+        '산업안전보건법': 1,
+        '산업안전보건법 시행령': 2,
+        '산업안전보건법 시행규칙': 3,
+        '산업안전보건기준에 관한 규칙': 4,
+        '건설기술 진흥법': 5,
+        '건설기술 진흥법 시행령': 6,
+        '건설기술 진흥법 시행규칙': 7,
+        '중대재해 처벌 등에 관한 법률': 8,
+        '중대재해 처벌 등에 관한 법률 시행령': 9
+    };
 
     try {
         const now = Date.now();
@@ -91,11 +98,26 @@ export default async function handler(req, res) {
             const isTitleMatch = item.articleTitle.includes(query);
             const isContentMatch = item.content.includes(query);
             if (isTitleMatch || isContentMatch) {
+                // 제목 일치면 priority 1, 아니면 2
                 matchedArticles.push({ ...item, priority: isTitleMatch ? 1 : 2 });
             }
         });
 
-        matchedArticles.sort((a, b) => a.priority - b.priority);
+        // ★ 정렬 알고리즘 적용 부분 ★
+        matchedArticles.sort((a, b) => {
+            // 1차 정렬: 제목 일치(priority 1)가 무조건 최우선
+            if (a.priority !== b.priority) {
+                return a.priority - b.priority;
+            }
+            
+            // 2차 정렬: 우선순위가 같다면(둘 다 본문 일치라면) 지정된 9대 핵심 법령 순서대로 정렬
+            // lawRanking 표에 없는 나머지 법령이나 고시들은 99등으로 처리하여 맨 밑으로 내림
+            const rankA = lawRanking[a.lawName] || 99;
+            const rankB = lawRanking[b.lawName] || 99;
+            
+            return rankA - rankB;
+        });
+
         res.status(200).json({ total: matchedArticles.length, results: matchedArticles });
         
     } catch (error) {
