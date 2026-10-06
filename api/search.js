@@ -1,4 +1,3 @@
-// 서버가 살아있는 동안 9대 법령 전체를 기억해두는 '메모리 공간'
 let allLawsCache = [];
 let lastCacheTime = 0;
 
@@ -8,15 +7,35 @@ export default async function handler(req, res) {
     if (!query) return res.status(200).json({ total: 0, results: [] });
 
     const apiKey = '4548';
+    
+    // ★ 토목 건설 현장에 필요한 30여 개 핵심 법령 및 고시 총망라 ★
     const targetLaws = [
+        // 1. 기존 핵심 안전법령
         '산업안전보건법', '산업안전보건법 시행령', '산업안전보건법 시행규칙', '산업안전보건기준에 관한 규칙',
         '중대재해 처벌 등에 관한 법률', '중대재해 처벌 등에 관한 법률 시행령',
-        '건설기술 진흥법', '건설기술 진흥법 시행령', '건설기술 진흥법 시행규칙'
+        '건설기술 진흥법', '건설기술 진흥법 시행령', '건설기술 진흥법 시행규칙',
+        // 2. 장비 및 기반시설
+        '건설기계관리법', '건설기계관리법 시행령', '건설기계관리법 시행규칙',
+        '시설물의 안전 및 유지관리에 관한 특별법', '시설물의 안전 및 유지관리에 관한 특별법 시행령', '시설물의 안전 및 유지관리에 관한 특별법 시행규칙',
+        // 3. 굴착 및 지하 안전
+        '지하안전관리에 관한 특별법', '지하안전관리에 관한 특별법 시행령', '지하안전관리에 관한 특별법 시행규칙',
+        // 4. 건설업 기초
+        '건설산업기본법', '건설산업기본법 시행령', '건설산업기본법 시행규칙',
+        // 5. 환경 및 재난
+        '소음·진동관리법', '소음·진동관리법 시행령', '소음·진동관리법 시행규칙',
+        '폐기물관리법', '폐기물관리법 시행령', '폐기물관리법 시행규칙',
+        '자연재해대책법', '자연재해대책법 시행령', '자연재해대책법 시행규칙',
+        // 6. 필수 고시 및 작업지침
+        '건설업 산업안전보건관리비 계상 및 사용기준',
+        '사업장 위험성평가에 관한 지침',
+        '건설공사 안전관리 업무수행 지침',
+        '굴착공사 표준안전 작업지침',
+        '터널공사 표준안전 작업지침',
+        '콘크리트공사 표준안전 작업지침'
     ];
 
     try {
         const now = Date.now();
-        // 메모리가 비어있거나, 12시간(43,200,000ms)이 지나면 정부 서버에서 새로 읽어옵니다.
         if (allLawsCache.length === 0 || now - lastCacheTime > 43200000) {
             let tempCache = [];
             const fetchPromises = targetLaws.map(async (lawName) => {
@@ -57,7 +76,6 @@ export default async function handler(req, res) {
                                 contentLines.push(text);
                             }
                         }
-                        
                         tempCache.push({ lawName, articleNo: joNo, articleTitle: joTitle, content: contentLines.join('\n') });
                     }
                 } catch (e) { return; }
@@ -68,13 +86,11 @@ export default async function handler(req, res) {
             lastCacheTime = now;
         }
 
-        // --- 여기서부터 0.1초 컷 초고속 검색 ---
         let matchedArticles = [];
         allLawsCache.forEach(item => {
             const isTitleMatch = item.articleTitle.includes(query);
             const isContentMatch = item.content.includes(query);
             if (isTitleMatch || isContentMatch) {
-                // 검색된 항목만 복사해서 우선순위 부여
                 matchedArticles.push({ ...item, priority: isTitleMatch ? 1 : 2 });
             }
         });
