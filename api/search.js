@@ -8,35 +8,50 @@ export default async function handler(req, res) {
 
     const apiKey = '4548';
     
-    // 에러를 유발하는 고시류를 빼고, 가장 완벽하게 작동하던 9대 법령으로 복구
-    const targetLaws = [
-        '산업안전보건법', '산업안전보건법 시행령', '산업안전보건법 시행규칙', '산업안전보건기준에 관한 규칙',
-        '건설기술 진흥법', '건설기술 진흥법 시행령', '건설기술 진흥법 시행규칙',
-        '중대재해 처벌 등에 관한 법률', '중대재해 처벌 등에 관한 법률 시행령'
+    // ★ Vercel 10초 제한을 넘지 않는 안전한 15대 핵심 법령/고시 리스트 ★
+    // 법률(law)과 고시(admrul)를 명확히 구분하여 에러를 원천 차단합니다.
+    const targetList = [
+        { name: '산업안전보건법', type: 'law' },
+        { name: '산업안전보건법 시행령', type: 'law' },
+        { name: '산업안전보건법 시행규칙', type: 'law' },
+        { name: '산업안전보건기준에 관한 규칙', type: 'law' },
+        { name: '중대재해 처벌 등에 관한 법률', type: 'law' },
+        { name: '중대재해 처벌 등에 관한 법률 시행령', type: 'law' },
+        { name: '건설기술 진흥법', type: 'law' },
+        { name: '건설기술 진흥법 시행령', type: 'law' },
+        { name: '건설기술 진흥법 시행규칙', type: 'law' },
+        { name: '건설기계관리법', type: 'law' },
+        { name: '사업장 위험성평가에 관한 지침', type: 'admrul' },
+        { name: '건설업 산업안전보건관리비 계상 및 사용기준', type: 'admrul' },
+        { name: '건설공사 안전관리 업무수행 지침', type: 'admrul' },
+        { name: '굴착공사 표준안전 작업지침', type: 'admrul' },
+        { name: '터널공사 표준안전 작업지침', type: 'admrul' }
     ];
 
-    // 요청하신 법령별 우선순위 랭킹표 유지
+    // 요청하신 정렬 우선순위 랭킹표
     const lawRanking = {
         '산업안전보건법': 1, '산업안전보건법 시행령': 2, '산업안전보건법 시행규칙': 3, '산업안전보건기준에 관한 규칙': 4,
         '건설기술 진흥법': 5, '건설기술 진흥법 시행령': 6, '건설기술 진흥법 시행규칙': 7,
-        '중대재해 처벌 등에 관한 법률': 8, '중대재해 처벌 등에 관한 법률 시행령': 9
+        '중대재해 처벌 등에 관한 법률': 8, '중대재해 처벌 등에 관한 법률 시행령': 9,
+        '사업장 위험성평가에 관한 지침': 10, '건설업 산업안전보건관리비 계상 및 사용기준': 11
     };
 
     try {
         const now = Date.now();
         if (allLawsCache.length === 0 || now - lastCacheTime > 43200000) {
             let tempCache = [];
-            const fetchPromises = targetLaws.map(async (lawName) => {
+            
+            const fetchPromises = targetList.map(async (target) => {
                 try {
-                    const searchUrl = `https://www.law.go.kr/DRF/lawSearch.do?OC=${apiKey}&target=law&type=XML&query=${encodeURIComponent(lawName)}`;
+                    const searchUrl = `https://www.law.go.kr/DRF/lawSearch.do?OC=${apiKey}&target=${target.type}&type=XML&query=${encodeURIComponent(target.name)}`;
                     const searchRes = await fetch(searchUrl);
                     const searchText = await searchRes.text();
                     
-                    const mstMatch = searchText.match(/<법령일련번호>(.*?)<\/법령일련번호>/);
-                    if (!mstMatch) return;
+                    const mstMatch = searchText.match(/<(?:법령일련번호|행정규칙일련번호)>(.*?)<\/(?:법령일련번호|행정규칙일련번호)>/);
+                    if (!mstMatch) return; // 검색 안 되면 안전하게 스킵
                     const mst = mstMatch[1];
 
-                    const detailUrl = `https://www.law.go.kr/DRF/lawService.do?OC=${apiKey}&target=law&type=XML&MST=${mst}`;
+                    const detailUrl = `https://www.law.go.kr/DRF/lawService.do?OC=${apiKey}&target=${target.type}&type=XML&MST=${mst}`;
                     const detailRes = await fetch(detailUrl);
                     const detailText = await detailRes.text();
 
@@ -64,14 +79,21 @@ export default async function handler(req, res) {
                                 contentLines.push(text);
                             }
                         }
-                        tempCache.push({ lawName, articleNo: joNo, articleTitle: joTitle, content: contentLines.join('\n') });
+                        tempCache.push({ lawName: target.name, articleNo: joNo, articleTitle: joTitle, content: contentLines.join('\n') });
                     }
-                } catch (e) { return; }
+                } catch (e) {
+                    // ★ 일부 법령이 뻑나도 전체 검색은 정상 작동하도록 방어 로직 추가 ★
+                    console.error(`Error loading ${target.name}`);
+                    return; 
+                }
             });
 
             await Promise.all(fetchPromises);
-            allLawsCache = tempCache;
-            lastCacheTime = now;
+            // 하나라도 불러왔다면 캐시 저장
+            if (tempCache.length > 0) {
+                allLawsCache = tempCache;
+                lastCacheTime = now;
+            }
         }
 
         let matchedArticles = [];
