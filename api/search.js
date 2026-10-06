@@ -8,6 +8,7 @@ export default async function handler(req, res) {
 
     const apiKey = '4548';
     
+    // ★ 15대 핵심 법령 및 고시 (법률과 행정규칙을 명확히 분리)
     const targetList = [
         { name: '산업안전보건법', type: 'law' },
         { name: '산업안전보건법 시행령', type: 'law' },
@@ -26,6 +27,7 @@ export default async function handler(req, res) {
         { name: '터널공사 표준안전 작업지침', type: 'admrul' }
     ];
 
+    // ★ 실무 중요도에 따른 노출 순위 배정
     const lawRanking = {
         '산업안전보건법': 1, '산업안전보건법 시행령': 2, '산업안전보건법 시행규칙': 3, '산업안전보건기준에 관한 규칙': 4,
         '건설기술 진흥법': 5, '건설기술 진흥법 시행령': 6, '건설기술 진흥법 시행규칙': 7,
@@ -36,20 +38,23 @@ export default async function handler(req, res) {
 
     try {
         const now = Date.now();
+        // 메모리 캐시가 비어있거나 12시간이 지났을 때만 새로 스캔
         if (allLawsCache.length === 0 || now - lastCacheTime > 43200000) {
             let tempCache = [];
             
-            const batchSize = 3;
+            // ★ 핵심 해결: 에러를 유발하던 search=2 조건을 삭제하고, 정부 서버가 튕겨내지 않게 5개씩 묶어서 안전하게 처리 (Batch)
+            const batchSize = 5;
             for (let i = 0; i < targetList.length; i += batchSize) {
                 const batch = targetList.slice(i, i + batchSize);
+                
                 await Promise.all(batch.map(async (target) => {
                     try {
-                        const searchUrl = `https://www.law.go.kr/DRF/lawSearch.do?OC=${apiKey}&target=${target.type}&type=XML&query=${encodeURIComponent(target.name)}&search=2`;
+                        const searchUrl = `https://www.law.go.kr/DRF/lawSearch.do?OC=${apiKey}&target=${target.type}&type=XML&query=${encodeURIComponent(target.name)}`;
                         const searchRes = await fetch(searchUrl);
                         const searchText = await searchRes.text();
                         
                         const mstMatch = searchText.match(/<(?:법령일련번호|행정규칙일련번호)>(.*?)<\/(?:법령일련번호|행정규칙일련번호)>/);
-                        if (!mstMatch) return;
+                        if (!mstMatch) return; 
                         const mst = mstMatch[1];
 
                         const detailUrl = `https://www.law.go.kr/DRF/lawService.do?OC=${apiKey}&target=${target.type}&type=XML&MST=${mst}`;
@@ -63,6 +68,7 @@ export default async function handler(req, res) {
                             const joXml = match[1];
                             let joNoMatch = joXml.match(/<조문번호>(.*?)<\/조문번호>/);
                             let joNo = joNoMatch ? `제${joNoMatch[1]}조` : '';
+                            
                             let joBrNoMatch = joXml.match(/<조문가지번호>(.*?)<\/조문가지번호>/);
                             if (joBrNoMatch && joBrNoMatch[1] !== '00') joNo += `의${joBrNoMatch[1]}`;
 
@@ -83,7 +89,7 @@ export default async function handler(req, res) {
                             tempCache.push({ lawName: target.name, articleNo: joNo, articleTitle: joTitle, content: contentLines.join('\n') });
                         }
                     } catch (e) {
-                        console.error(`Error loading ${target.name}`);
+                        console.error(`[Error] ${target.name} 스캔 실패`);
                     }
                 }));
             }
