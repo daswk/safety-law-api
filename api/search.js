@@ -8,35 +8,18 @@ export default async function handler(req, res) {
 
     const apiKey = '4548';
     
+    // 에러를 유발하는 고시류를 빼고, 가장 완벽하게 작동하던 9대 법령으로 복구
     const targetLaws = [
         '산업안전보건법', '산업안전보건법 시행령', '산업안전보건법 시행규칙', '산업안전보건기준에 관한 규칙',
         '건설기술 진흥법', '건설기술 진흥법 시행령', '건설기술 진흥법 시행규칙',
-        '중대재해 처벌 등에 관한 법률', '중대재해 처벌 등에 관한 법률 시행령',
-        '건설기계관리법', '건설기계관리법 시행령', '건설기계관리법 시행규칙',
-        '시설물의 안전 및 유지관리에 관한 특별법', '시설물의 안전 및 유지관리에 관한 특별법 시행령', '시설물의 안전 및 유지관리에 관한 특별법 시행규칙',
-        '지하안전관리에 관한 특별법', '지하안전관리에 관한 특별법 시행령', '지하안전관리에 관한 특별법 시행규칙',
-        '건설산업기본법', '건설산업기본법 시행령', '건설산업기본법 시행규칙',
-        '소음·진동관리법', '소음·진동관리법 시행령', '소음·진동관리법 시행규칙',
-        '폐기물관리법', '폐기물관리법 시행령', '폐기물관리법 시행규칙',
-        '자연재해대책법', '자연재해대책법 시행령', '자연재해대책법 시행규칙',
-        '건설업 산업안전보건관리비 계상 및 사용기준',
-        '사업장 위험성평가에 관한 지침',
-        '건설공사 안전관리 업무수행 지침',
-        '굴착공사 표준안전 작업지침',
-        '터널공사 표준안전 작업지침',
-        '콘크리트공사 표준안전 작업지침'
+        '중대재해 처벌 등에 관한 법률', '중대재해 처벌 등에 관한 법률 시행령'
     ];
 
+    // 요청하신 법령별 우선순위 랭킹표 유지
     const lawRanking = {
-        '산업안전보건법': 1,
-        '산업안전보건법 시행령': 2,
-        '산업안전보건법 시행규칙': 3,
-        '산업안전보건기준에 관한 규칙': 4,
-        '건설기술 진흥법': 5,
-        '건설기술 진흥법 시행령': 6,
-        '건설기술 진흥법 시행규칙': 7,
-        '중대재해 처벌 등에 관한 법률': 8,
-        '중대재해 처벌 등에 관한 법률 시행령': 9
+        '산업안전보건법': 1, '산업안전보건법 시행령': 2, '산업안전보건법 시행규칙': 3, '산업안전보건기준에 관한 규칙': 4,
+        '건설기술 진흥법': 5, '건설기술 진흥법 시행령': 6, '건설기술 진흥법 시행규칙': 7,
+        '중대재해 처벌 등에 관한 법률': 8, '중대재해 처벌 등에 관한 법률 시행령': 9
     };
 
     try {
@@ -45,19 +28,15 @@ export default async function handler(req, res) {
             let tempCache = [];
             const fetchPromises = targetLaws.map(async (lawName) => {
                 try {
-                    // ★ 핵심 로직: 이름에 '지침'이나 '기준'이 들어가면 'admrul(행정규칙)'로 변경하여 검색 ★
-                    const targetType = (lawName.includes('지침') || lawName.includes('기준')) ? 'admrul' : 'law';
-                    
-                    const searchUrl = `https://www.law.go.kr/DRF/lawSearch.do?OC=${apiKey}&target=${targetType}&type=XML&query=${encodeURIComponent(lawName)}`;
+                    const searchUrl = `https://www.law.go.kr/DRF/lawSearch.do?OC=${apiKey}&target=law&type=XML&query=${encodeURIComponent(lawName)}`;
                     const searchRes = await fetch(searchUrl);
                     const searchText = await searchRes.text();
                     
-                    // 법령일련번호 또는 행정규칙일련번호 추출
-                    const mstMatch = searchText.match(/<(?:법령일련번호|행정규칙일련번호)>(.*?)<\/(?:법령일련번호|행정규칙일련번호)>/);
+                    const mstMatch = searchText.match(/<법령일련번호>(.*?)<\/법령일련번호>/);
                     if (!mstMatch) return;
                     const mst = mstMatch[1];
 
-                    const detailUrl = `https://www.law.go.kr/DRF/lawService.do?OC=${apiKey}&target=${targetType}&type=XML&MST=${mst}`;
+                    const detailUrl = `https://www.law.go.kr/DRF/lawService.do?OC=${apiKey}&target=law&type=XML&MST=${mst}`;
                     const detailRes = await fetch(detailUrl);
                     const detailText = await detailRes.text();
 
