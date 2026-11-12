@@ -1,0 +1,33 @@
+name: API 동작 점검
+on:
+  push:
+    paths: ['api/**', 'vercel.json', '.github/workflows/api-check.yml']
+  workflow_dispatch: {}
+permissions:
+  contents: write
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 배포 대기 후 실제 API 호출
+        run: |
+          sleep 120
+          {
+            echo "# API 점검 ($(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M') KST)"
+            for q in 위험성평가 "안전 관리비" "굴착 기울기" 벌목 정기안전점검; do
+              enc=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "$q")
+              body=$(curl -s -m 30 "https://safety-law-api.vercel.app/api/search?query=$enc")
+              echo "- $q → $(echo "$body" | python3 -c "import json,sys
+          try:
+            d=json.load(sys.stdin); r=d.get('results',[])
+            print(f\"total={d.get('total')} shown={d.get('shown')} 기준일={d.get('updatedAt')} 첫결과={(r[0]['lawName']+' '+r[0]['articleNo']) if r else '-'}\")
+          except Exception as e: print('오류', str(e))")"
+            done
+          } > data/api-check.md
+          cat data/api-check.md
+      - run: |
+          git config user.name "law-bot"; git config user.email "law-bot@users.noreply.github.com"
+          git pull -q --rebase origin main
+          git add data/api-check.md
+          git diff --cached --quiet || (git commit -m "API 점검 결과" && git push)
