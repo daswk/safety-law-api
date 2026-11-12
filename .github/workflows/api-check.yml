@@ -26,6 +26,10 @@ jobs:
             done
             body=$(curl -s -m 30 "https://safety-law-api.vercel.app/api/search?law=$(python3 -c "import urllib.parse;print(urllib.parse.quote('벌목 표준안전 작업지침'))")")
             echo "- [law] 벌목 표준안전 작업지침 → $(echo "$body" | python3 -c "import json,sys;d=json.load(sys.stdin);print('조문', d.get('total'), '시행', d.get('law',{}).get('eff'))")"
+            T=$(python3 -c "import urllib.parse,json;print(urllib.parse.quote(json.dumps([['포장',3],['콘크리트',3],['차량계건설기계',1.5],['협착',1.5]],ensure_ascii=False)))")
+            P=$(python3 -c "import urllib.parse,json;print(urllib.parse.quote(json.dumps([['산업안전보건기준에 관한 규칙','제38조'],['도로교통법','제69조']],ensure_ascii=False)))")
+            body=$(curl -s -m 30 "https://safety-law-api.vercel.app/api/search?query=x&terms=$T&pins=$P")
+            echo "- [smart] 콘크리트포장 → $(echo "$body" | python3 -c "import json,sys;d=json.load(sys.stdin);r=d.get('results',[]);print(d.get('mode'),'꼭볼',d.get('pinned'),'건수',d.get('shown'),'첫결과',(r[0]['lawName']+' '+r[0]['articleNo']) if r else '-')")"
             body=$(curl -s -m 30 "https://safety-law-api.vercel.app/api/search")
             echo "- [목록] → $(echo "$body" | python3 -c "import json,sys;d=json.load(sys.stdin);print('법령', len(d.get('laws',[])), '개')")"
           } > data/api-check.md
