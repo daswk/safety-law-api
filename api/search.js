@@ -1,6 +1,8 @@
 // 안전법령 검색 API
 // data/laws.json(매일 GitHub Actions가 법제처에서 받아 저장)에서 바로 검색합니다.
 //   GET /api/search?query=검색어[&limit=200]
+//   GET /api/search?law=법령명      → 해당 법령의 전체 조문
+//   GET /api/search                 → 수록 법령 목록
 //   - 띄어쓰기 무시, 여러 단어는 모두 포함된 조문만(AND)
 //   - 정렬: 조문제목 일치 > 본문 일치 횟수 > 법령 우선순위(targets.json 순서)
 import fs from 'node:fs';
@@ -31,6 +33,19 @@ export default function handler(req, res) {
     let d;
     try { d = load(); }
     catch (e) { return res.status(500).json({ error: '법령 자료를 불러오지 못했습니다', details: String(e) }); }
+
+    // 법령 하나의 전체 조문: /api/search?law=법령명
+    const lawName = String(req.query.law || '').trim();
+    if (lawName) {
+        const li = d.laws.findIndex(l => l.name === lawName);
+        if (li < 0) return res.status(404).json({ error: '해당 법령이 없습니다', law: lawName });
+        const law = d.laws[li];
+        const results = d.rows.filter(r => r.li === li).map(r => ({
+            lawName: law.name, lawType: law.type === 'admrul' ? '행정규칙' : '법령',
+            articleNo: r.no, articleTitle: r.title, content: r.content, priority: 2
+        }));
+        return res.status(200).json({ law: { name: law.name, type: law.type, eff: law.eff, count: results.length }, total: results.length, updatedAt: d.updatedAt, results });
+    }
 
     if (!query) {
         return res.status(200).json({

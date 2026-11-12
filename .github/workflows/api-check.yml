@@ -24,6 +24,10 @@ jobs:
             print(f\"total={d.get('total')} shown={d.get('shown')} 기준일={d.get('updatedAt')} 첫결과={(r[0]['lawName']+' '+r[0]['articleNo']) if r else '-'}\")
           except Exception as e: print('오류', str(e))")"
             done
+            body=$(curl -s -m 30 "https://safety-law-api.vercel.app/api/search?law=$(python3 -c "import urllib.parse;print(urllib.parse.quote('벌목 표준안전 작업지침'))")")
+            echo "- [law] 벌목 표준안전 작업지침 → $(echo "$body" | python3 -c "import json,sys;d=json.load(sys.stdin);print('조문', d.get('total'), '시행', d.get('law',{}).get('eff'))")"
+            body=$(curl -s -m 30 "https://safety-law-api.vercel.app/api/search")
+            echo "- [목록] → $(echo "$body" | python3 -c "import json,sys;d=json.load(sys.stdin);print('법령', len(d.get('laws',[])), '개')")"
           } > data/api-check.md
           cat data/api-check.md
       - run: |
